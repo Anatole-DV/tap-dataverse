@@ -43,9 +43,41 @@ class DataverseTableStream(DataverseStream):
         self.start_date = stream_config.get(
             "start_date", tap.config.get("start_date", "")
         )
-        self.replication_key = stream_config.get(
+        # Use the property setter to ensure proper replication method detection
+        replication_key_value = stream_config.get(
             "replication_key", tap.config.get("replication_key", "")
         )
+        if replication_key_value:
+            self.replication_key = replication_key_value
+    
+    def get_starting_timestamp(self, context: dict | None) -> datetime.datetime | None:
+        """Get starting replication timestamp with proper start_date fallback.
+        
+        This method fixes the issue where start_date is not properly used
+        when no state exists.
+        """
+        from datetime import datetime
+        import pendulum
+        
+        # First try to get from state
+        value = self.get_starting_replication_key_value(context)
+        
+        # If no state value, use start_date if available
+        if value is None and self.start_date:
+            try:
+                return pendulum.parse(self.start_date)
+            except Exception:
+                self.logger.warning(f"Invalid start_date format: {self.start_date}")
+                return None
+        
+        # If we have a value, validate it's a timestamp
+        if value is not None:
+            if not self.is_timestamp_replication_key:
+                msg = f"The replication key {self.replication_key} is not of timestamp type"
+                raise ValueError(msg)
+            return pendulum.parse(value)
+        
+        return None
         
     @property
     def is_sorted(self) -> bool:
@@ -88,11 +120,17 @@ class DataverseTableStream(DataverseStream):
         """
         # Initialise Starting Values
         try:
-            last_run_date = self.get_starting_timestamp(context).strftime(
-                "%Y-%m-%dT%H:%M:%S.%fZ"
-            )
+            timestamp = self.get_starting_timestamp(context)
+            if timestamp:
+                last_run_date = timestamp.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            else:
+                # Fallback to start_date if no timestamp from state
+                last_run_date = self.start_date if self.start_date else None
         except (ValueError, AttributeError):
             last_run_date = self.get_starting_replication_key_value(context)
+            # If still None, try start_date
+            if last_run_date is None and self.start_date:
+                last_run_date = self.start_date
 
         params: dict = {}
 
