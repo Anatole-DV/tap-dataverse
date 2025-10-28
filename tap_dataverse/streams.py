@@ -40,6 +40,9 @@ class DataverseTableStream(DataverseStream):
         self.path = path
         self.records_path = "$.value[*]"
 
+       # Store custom query params from stream config
+        self.custom_query_params = stream_config.get("query_params", "")
+
         self.start_date = stream_config.get(
             "start_date", tap.config.get("start_date", "")
         )
@@ -138,6 +141,18 @@ class DataverseTableStream(DataverseStream):
             params["$orderby"] = f"{self.replication_key} asc"
             if last_run_date:
                 params["$filter"] = f"{self.replication_key} ge {last_run_date}"
+
+        # Add custom query params from stream config
+        if self.custom_query_params:
+            # Parse the custom query params string (e.g., "$filter=objectidtypecode eq 'contact'")
+            for param in self.custom_query_params.split("&"):
+                if "=" in param:
+                    key, value = param.split("=", 1)
+                    # If $filter already exists, combine them with 'and'
+                    if key == "$filter" and "$filter" in params:
+                        params["$filter"] = f"({params['$filter']}) and ({value})"
+                    else:
+                        params[key] = value
 
         if next_page_token:
             # Only provide the skiptoken on subsequent requests
